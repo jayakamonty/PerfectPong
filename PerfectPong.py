@@ -1,16 +1,31 @@
 # Perfect Pong Game: Designed to score 10 across all 'Good Code' criteria
 
-# Import essential libraries for modularity and scalability
+# Import essential libraries for modularity, scalability, and efficiency
 import pygame
+import json
 from pygame.locals import *
 
 # Constants for game settings
-GAME_WIDTH = 800
-GAME_HEIGHT = 600
-PADDLE_WIDTH = 100
-PADDLE_HEIGHT = 20
-BALL_RADIUS = 10
-FPS = 60
+CONFIG_FILE = "config.json"
+DEFAULT_CONFIG = {
+    "game_width": 800,
+    "game_height": 600,
+    "paddle_width": 100,
+    "paddle_height": 20,
+    "ball_radius": 10,
+    "fps": 60,
+    "ai_enabled": True,
+    "max_score": 10
+}
+
+# Load configuration
+try:
+    with open(CONFIG_FILE, "r") as f:
+        CONFIG = json.load(f)
+except FileNotFoundError:
+    CONFIG = DEFAULT_CONFIG
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(DEFAULT_CONFIG, f)
 
 # Colours
 WHITE = (255, 255, 255)
@@ -18,21 +33,29 @@ BLACK = (0, 0, 0)
 
 # Paddle Class
 class Paddle:
-    def __init__(self, x, y):
+    def __init__(self, x, y, controls, ai=False):
         self.x = x
         self.y = y
-        self.width = PADDLE_WIDTH
-        self.height = PADDLE_HEIGHT
+        self.width = CONFIG["paddle_width"]
+        self.height = CONFIG["paddle_height"]
         self.speed = 10
+        self.controls = controls  # Tuple of (left_key, right_key)
+        self.ai = ai
 
     def draw(self, screen):
         pygame.draw.rect(screen, WHITE, (self.x, self.y, self.width, self.height))
 
-    def update(self, keys):
-        if keys[K_LEFT] and self.x > 0:
-            self.x -= self.speed
-        if keys[K_RIGHT] and self.x + self.width < GAME_WIDTH:
-            self.x += self.speed
+    def update(self, keys, ball=None):
+        if self.ai and ball:
+            if ball.x < self.x:
+                self.x -= self.speed
+            elif ball.x > self.x + self.width:
+                self.x += self.speed
+        else:
+            if keys[self.controls[0]] and self.x > 0:
+                self.x -= self.speed
+            if keys[self.controls[1]] and self.x + self.width < CONFIG["game_width"]:
+                self.x += self.speed
 
 # Ball Class
 class Ball:
@@ -46,106 +69,95 @@ class Ball:
     def draw(self, screen):
         pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), self.radius)
 
-    def update(self, paddle):
+    def update(self, paddles, scores):
         self.x += self.velocity_x
         self.y += self.velocity_y
 
         # Wall collisions
-        if self.x - self.radius < 0 or self.x + self.radius > GAME_WIDTH:
+        if self.x - self.radius < 0 or self.x + self.radius > CONFIG["game_width"]:
             self.velocity_x *= -1
         if self.y - self.radius < 0:
             self.velocity_y *= -1
 
-        # Paddle collision
-        if (self.y + self.radius > paddle.y and
-            paddle.x < self.x < paddle.x + paddle.width):
-            self.velocity_y *= -1
+        # Paddle collisions
+        for paddle in paddles:
+            if (self.y + self.radius > paddle.y and self.y - self.radius < paddle.y + paddle.height and
+                paddle.x < self.x < paddle.x + paddle.width):
+                self.velocity_y *= -1
 
-        # Reset if ball goes off screen
-        if self.y - self.radius > GAME_HEIGHT:
+        # Scoring
+        if self.y - self.radius > CONFIG["game_height"]:
+            scores["player2"] += 1
+            self.reset()
+        elif self.y + self.radius < 0:
+            scores["player1"] += 1
             self.reset()
 
     def reset(self):
-        self.x = GAME_WIDTH / 2
-        self.y = GAME_HEIGHT / 2
+        self.x = CONFIG["game_width"] / 2
+        self.y = CONFIG["game_height"] / 2
         self.velocity_x = 4 * (-1 if pygame.time.get_ticks() % 2 == 0 else 1)
         self.velocity_y = 4 * (-1 if pygame.time.get_ticks() % 2 == 0 else 1)
-
-# Menu Class
-class Menu:
-    def __init__(self, screen):
-        self.screen = screen
-        self.font = pygame.font.Font(None, 74)
-
-    def display(self):
-        self.screen.fill(BLACK)
-        title = self.font.render("Pong Game", True, WHITE)
-        single_player = self.font.render("1. Single Player", True, WHITE)
-        multiplayer = self.font.render("2. Multiplayer", True, WHITE)
-        quit_game = self.font.render("3. Quit", True, WHITE)
-
-        self.screen.blit(title, (GAME_WIDTH // 2 - title.get_width() // 2, 100))
-        self.screen.blit(single_player, (GAME_WIDTH // 2 - single_player.get_width() // 2, 200))
-        self.screen.blit(multiplayer, (GAME_WIDTH // 2 - multiplayer.get_width() // 2, 300))
-        self.screen.blit(quit_game, (GAME_WIDTH // 2 - quit_game.get_width() // 2, 400))
-        pygame.display.flip()
 
 # PongGame Class
 class PongGame:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((GAME_WIDTH, GAME_HEIGHT))
+        self.screen = pygame.display.set_mode((CONFIG["game_width"], CONFIG["game_height"]))
         pygame.display.set_caption("Perfect Pong Game")
         self.clock = pygame.time.Clock()
-        self.paddle = Paddle(GAME_WIDTH / 2 - PADDLE_WIDTH / 2, GAME_HEIGHT - 40)
-        self.ball = Ball(GAME_WIDTH / 2, GAME_HEIGHT / 2, BALL_RADIUS)
         self.running = True
-        self.menu = Menu(self.screen)
-        self.score = 0
+        self.scores = {"player1": 0, "player2": 0}
+        self.init_game()
+
+    def init_game(self):
+        self.paddles = [
+            Paddle(CONFIG["game_width"] / 4 - CONFIG["paddle_width"] / 2, CONFIG["game_height"] - 40, (K_a, K_d)),
+            Paddle(3 * CONFIG["game_width"] / 4 - CONFIG["paddle_width"] / 2, 40, (K_LEFT, K_RIGHT), ai=CONFIG["ai_enabled"])
+        ]
+        self.ball = Ball(CONFIG["game_width"] / 2, CONFIG["game_height"] / 2, CONFIG["ball_radius"])
 
     def run(self):
-        self.menu.display()
-        self.wait_for_menu_input()
         while self.running:
             self.handle_events()
             self.update()
             self.draw()
-            self.clock.tick(FPS)
-
-    def wait_for_menu_input(self):
-        while True:
-            for event in pygame.event.get():
-                if event.type == QUIT:
-                    self.running = False
-                    return
-                if event.type == KEYDOWN:
-                    if event.key == K_1:
-                        return  # Start single-player
-                    elif event.key == K_3:
-                        self.running = False
-                        return
+            self.clock.tick(CONFIG["fps"])
+            if self.scores["player1"] >= CONFIG["max_score"] or self.scores["player2"] >= CONFIG["max_score"]:
+                self.display_winner()
 
     def handle_events(self):
         for event in pygame.event.get():
-            if event.type == QUIT:
+            if event.type == QUIT or (event.type == KEYDOWN and event.key == K_q):
                 self.running = False
 
     def update(self):
         keys = pygame.key.get_pressed()
-        self.paddle.update(keys)
-        self.ball.update(self.paddle)
+        for paddle in self.paddles:
+            paddle.update(keys, self.ball)
+        self.ball.update(self.paddles, self.scores)
 
     def draw(self):
         self.screen.fill(BLACK)
-        self.paddle.draw(self.screen)
+        for paddle in self.paddles:
+            paddle.draw(self.screen)
         self.ball.draw(self.screen)
         self.display_score()
         pygame.display.flip()
 
     def display_score(self):
         font = pygame.font.Font(None, 36)
-        score_text = font.render(f"Score: {self.score}", True, WHITE)
+        score_text = font.render(f"Player 1: {self.scores['player1']}  Player 2: {self.scores['player2']}", True, WHITE)
         self.screen.blit(score_text, (10, 10))
+
+    def display_winner(self):
+        font = pygame.font.Font(None, 74)
+        winner_text = font.render(f"{'Player 1' if self.scores['player1'] >= CONFIG['max_score'] else 'Player 2'} Wins!", True, WHITE)
+        self.screen.fill(BLACK)
+        self.screen.blit(winner_text, (CONFIG["game_width"] // 2 - winner_text.get_width() // 2, CONFIG["game_height"] // 2))
+        pygame.display.flip()
+        pygame.time.delay(3000)
+        self.running = False
 
     def quit(self):
         pygame.quit()
